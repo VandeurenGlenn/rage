@@ -1,0 +1,35 @@
+{
+  "name": "@vandeurenglenn/rage",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "exports": {
+    "./rage": {
+      "import": "./exports/rage.js",
+      "types": "./exports/rage.d.ts"
+    }
+  },
+  "keywords": [],
+  "bin": {
+    "rage": "./exports/index.js"
+  },
+  "files": [
+    "exports"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.1.0",
+    "listr": "^0.14.3",
+    "meow": "^13.2.0",
+    "semver": "^7.6.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.1",
+    "@types/semver": "^7.5.8"
+  }
+}
