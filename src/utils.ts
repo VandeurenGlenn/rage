@@ -1,35 +1,61 @@
 import { readdir, glob, stat, mkdir, open } from 'fs/promises'
 import { join, parse } from 'path'
 import { CACHE_PATH } from './constants.js'
+import config from './config.js'
 
-export const transformWorkspaceDir = async (root, target) =>
-  Promise.all(
-    (await readdir(root)).map(async (project) => {
-      if (!Array.isArray(target)) target = [target]
-      let targets = []
-      for (const _target of target) {
-        const parsed = parse(_target)
-        if (parsed.ext) {
-          targets.push(`${root}/${project}/${_target}`)
-        } else {
-          targets.push(`${root}/${project}/${_target}/**`)
-        }
-      }
-      let files = []
-      try {
-        const _files = await glob(targets)
-        for await (const file of _files) {
-          const stats = await stat(file)
-          if (stats.isFile()) files.push(file)
-        }
-      } catch (error) {
-        console.warn(`nothing found for, ${join(root, project, target)}`)
-      }
-      console.log(project)
+const globIt = async (targets) => {
+  const files = []
 
-      return { root, project, files }
-    })
-  )
+  const _files = glob(targets)
+  for await (const file of _files) {
+    const stats = await stat(file)
+    if (stats.isFile()) files.push(file)
+  }
+  return files
+}
+
+export const transformWorkspace = async (root, target) => {
+  let targets = []
+  let files
+
+  if (!Array.isArray(target)) target = [target]
+
+  if (config.monorepo) {
+    return Promise.all(
+      (await readdir(root)).map(async (project) => {
+        for (const _target of target) {
+          const parsed = parse(_target)
+          if (parsed.ext) {
+            targets.push(`${root}/${project}/${_target}`)
+          } else {
+            targets.push(`${root}/${project}/${_target}/**`)
+          }
+        }
+        try {
+          files = await globIt(targets)
+        } catch (error) {
+          console.warn(`nothing found for, ${join(root, project, target)}`)
+        }
+        return { root, project, files }
+      })
+    )
+  } else {
+    for (const _target of target) {
+      const parsed = parse(_target)
+      if (parsed.ext) {
+        targets.push(`${root}/${_target}`)
+      } else {
+        targets.push(`${root}/${_target}/**`)
+      }
+    }
+    try {
+      files = await globIt(targets)
+    } catch (error) {
+      console.warn(`nothing found for, ${join(root, target)}`)
+    }
+    return [{ root, project: '', files }]
+  }
+}
 
 export const checkCache = async () => {
   try {

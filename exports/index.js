@@ -44,7 +44,7 @@ const cli = meow(
   }
 )
 
-console.log(cli.flags)
+// console.log(cli.flags)
 if (cli.flags.build) {
   time('build')
   await build()

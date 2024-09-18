@@ -1,11 +1,10 @@
 import { createReadStream, createWriteStream } from 'fs'
-import { open, mkdir, writeFile, readFile, FileHandle } from 'fs/promises'
+import { mkdir, writeFile, readFile, FileHandle } from 'fs/promises'
 import { createHash } from 'crypto'
 import { Writable, Readable, ReadableOptions } from 'stream'
 
 import { join } from 'path'
 import { CACHE_PATH } from './constants.js'
-import { time, timeEnd } from 'console'
 
 class CacheStream extends Writable {
   resolver
@@ -62,12 +61,12 @@ export default async ({ project, files }, target) => {
 
   if (promises.length === 0) return
 
-  const PROJECT_CACHE_PATH = join(CACHE_PATH, project, target)
+  const PROJECT_CACHE_PATH = join(CACHE_PATH, project ?? '', target)
 
   try {
     originalHash = (await readFile(PROJECT_CACHE_PATH)).toString()
   } catch (error) {
-    await mkdir(join(CACHE_PATH, project), { recursive: true })
+    await mkdir(join(CACHE_PATH, project ?? ''), { recursive: true })
   }
 
   promises = await Promise.all(promises)

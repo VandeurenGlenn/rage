@@ -5,6 +5,9 @@ import { pathToFileURL } from 'url'
 
 const configFileOptions = ['rage.config.js', 'rage.config.json', 'rage.config', 'rage.json', 'rage.js']
 
+let config = DEFAULT_CONFIG
+const cwd = process.cwd()
+
 const tryRead = async (path) => {
   try {
     const fd = await open(path)
@@ -38,9 +41,6 @@ const tryReadConfig = async (path) => {
   }
   return data
 }
-
-let config = DEFAULT_CONFIG
-const cwd = process.cwd()
 try {
   const result = await tryReadConfig(cwd)
   if (result) {

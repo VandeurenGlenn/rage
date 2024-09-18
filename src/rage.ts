@@ -7,7 +7,7 @@ import Listr from 'listr'
 import semver from 'semver'
 
 import config from './config.js'
-import { checkCache, transformWorkspaceDir } from './utils.js'
+import { checkCache, transformWorkspace } from './utils.js'
 import { log } from 'console'
 
 // console.time('build time')
@@ -16,7 +16,7 @@ export const build = async () => {
   const build = async (root, project) =>
     new Promise((resolve) => {
       try {
-        const spawnee = spawnSync(`npm run build`, { cwd: join(process.cwd(), root, project), shell: true })
+        const spawnee = spawnSync(`npm run build`, { cwd: join(process.cwd(), root, project ?? ''), shell: true })
         // todo better error handling
         if (process.argv.includes('--log')) {
           const stderr = spawnee.stderr.toString()
@@ -39,7 +39,7 @@ export const build = async () => {
   const sortProjects = () => {
     for (const project of [...projectDirs]) {
       if (config.priority.includes(project.project)) {
-        projectDirs.slice(projectDirs.indexOf(project), '1')
+        projectDirs.slice(projectDirs.indexOf(project), 1)
         priorityProjects.push(project)
       } else {
         nonPriorityProjects.push(project)
@@ -48,6 +48,7 @@ export const build = async () => {
   }
 
   const buildPriority = async () => {
+    if (priorityProjects.length === 0) return
     const results = await Promise.all(priorityProjects.map((project) => hashit(project, config.src)))
     for (const result of results) {
       if (result) {
@@ -58,6 +59,7 @@ export const build = async () => {
   }
 
   const buildNonPriority = async () => {
+    if (nonPriorityProjects.length === 0) return
     const results = await Promise.all(nonPriorityProjects.map((project) => hashit(project, config.src)))
     let promises = []
     let count = 0
@@ -105,7 +107,7 @@ export const build = async () => {
         new Listr([
           {
             title: 'getting projects',
-            task: async () => (projectDirs = await transformWorkspaceDir(config.root, config.src))
+            task: async () => (projectDirs = await transformWorkspace(config.root, config.src))
           }
         ])
     },
@@ -127,9 +129,12 @@ export const build = async () => {
 
 const versionTask = (project, type) =>
   new Promise((resolve) => {
-    log(`bumping version for ${project}`)
+    log(`bumping version for ${project !== '' ? project : config.dirname}`)
     try {
-      const spawnee = spawnSync(`npm version ${type}`, { cwd: join(process.cwd(), config.root, project), shell: true })
+      const spawnee = spawnSync(`npm version ${type}`, {
+        cwd: join(process.cwd(), config.root, project),
+        shell: true
+      })
       const version = spawnee.stdout.toString().replace('\n', '')
       console.log(`bumped version to ${version}`)
       resolve(true)
@@ -139,7 +144,7 @@ const versionTask = (project, type) =>
 const publishTask = (project, otp) =>
   new Promise((resolve) => {
     const spawnee = spawnSync(`npm publish --otp=${otp}`, {
-      cwd: join(process.cwd(), config.root, project),
+      cwd: join(process.cwd(), config.root, project ?? ''),
       shell: true
     })
     resolve(true)
@@ -211,7 +216,7 @@ export const patch = async () => {
           {
             title: 'getting projects',
             task: async () =>
-              (projectDirs = await transformWorkspaceDir(config.root, [
+              (projectDirs = await transformWorkspace(config.root, [
                 config.exports,
                 'package.json',
                 'packages.lock.json'
@@ -248,7 +253,7 @@ export const minor = async () => {
           {
             title: 'getting projects',
             task: async () =>
-              (projectDirs = await transformWorkspaceDir(config.root, [
+              (projectDirs = await transformWorkspace(config.root, [
                 config.exports,
                 'package.json',
                 'packages.lock.json'
@@ -285,7 +290,7 @@ export const major = async () => {
           {
             title: 'getting projects',
             task: async () =>
-              (projectDirs = await transformWorkspaceDir(config.root, [config.exports, config.dependencies]))
+              (projectDirs = await transformWorkspace(config.root, [config.exports, config.dependencies]))
           }
         ])
     },
@@ -319,7 +324,7 @@ export const publish = async (type: 'patch' | 'minor' | 'major') => {
           {
             title: 'getting projects',
             task: async () =>
-              (projectDirs = await transformWorkspaceDir(config.root, [
+              (projectDirs = await transformWorkspace(config.root, [
                 config.exports,
                 'package.json',
                 'packages.lock.json'
