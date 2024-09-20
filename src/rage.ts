@@ -158,7 +158,7 @@ const versionChange = async ({ project }) => {
     const version = JSON.parse(packageJson).version
     try {
       const cachedVersion = (await readFile(join(CACHE_PATH, project, 'version'))).toString()
-      const changed = semver.compare(version, cachedVersion) === 1
+      const changed = semver.compare(cachedVersion, version) === -1
       if (changed) {
         await writeFile(join(CACHE_PATH, project, 'version'), version)
       }
