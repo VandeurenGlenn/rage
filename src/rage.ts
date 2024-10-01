@@ -303,7 +303,7 @@ export const major = async () => {
 }
 
 // console.timeEnd('build time')
-export const publish = async (type: 'patch' | 'minor' | 'major') => {
+export const publish = async () => {
   let projectDirs
 
   const tasks = new Listr([

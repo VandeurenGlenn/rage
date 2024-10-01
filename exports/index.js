@@ -50,24 +50,24 @@ if (cli.flags.build) {
   await build()
   timeEnd('build')
 }
+
+if (cli.flags.patch) {
+  time('patch')
+  await patch()
+  timeEnd('patch')
+}
+if (cli.flags.minor) {
+  time('minor')
+  await minor()
+  timeEnd('minor')
+}
+if (cli.flags.major) {
+  time('major')
+  await major()
+  timeEnd('major')
+}
 if (cli.flags.publish) {
   time('publish')
-  await publish(cli.flags.minor ? 'minor' : cli.flags.major ? 'major' : 'patch')
+  await publish()
   timeEnd('publish')
-} else {
-  if (cli.flags.patch) {
-    time('patch')
-    await patch()
-    timeEnd('patch')
-  }
-  if (cli.flags.minor) {
-    time('minor')
-    await minor()
-    timeEnd('minor')
-  }
-  if (cli.flags.major) {
-    time('major')
-    await major()
-    timeEnd('major')
-  }
 }
