@@ -66,7 +66,7 @@ export default async ({ project, files }, target) => {
   try {
     originalHash = (await readFile(PROJECT_CACHE_PATH)).toString()
   } catch (error) {
-    await mkdir(join(CACHE_PATH, project ?? ''), { recursive: true })
+    await mkdir(PROJECT_CACHE_PATH, { recursive: true })
   }
 
   promises = await Promise.all(promises)

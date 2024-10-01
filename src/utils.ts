@@ -15,14 +15,12 @@ const globIt = async (targets) => {
 }
 
 export const transformWorkspace = async (root, target) => {
-  let targets = []
-  let files
-
   if (!Array.isArray(target)) target = [target]
-
   if (config.monorepo) {
     return Promise.all(
       (await readdir(root)).map(async (project) => {
+        const targets = []
+        let files = []
         for (const _target of target) {
           const parsed = parse(_target)
           if (parsed.ext) {
@@ -40,6 +38,8 @@ export const transformWorkspace = async (root, target) => {
       })
     )
   } else {
+    const targets = []
+    let files = []
     for (const _target of target) {
       const parsed = parse(_target)
       if (parsed.ext) {
