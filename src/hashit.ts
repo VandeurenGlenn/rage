@@ -61,10 +61,10 @@ export default async ({ project, files }, target) => {
 
   if (promises.length === 0) return
 
-  const PROJECT_CACHE_PATH = join(CACHE_PATH, project ?? '', target)
+  const PROJECT_CACHE_PATH = join(CACHE_PATH, project ?? '')
 
   try {
-    originalHash = (await readFile(PROJECT_CACHE_PATH)).toString()
+    originalHash = (await readFile(join(PROJECT_CACHE_PATH, 'hash'))).toString()
   } catch (error) {
     await mkdir(PROJECT_CACHE_PATH, { recursive: true })
   }
@@ -74,7 +74,7 @@ export default async ({ project, files }, target) => {
 
   if (String(originalHash) !== String(hash.toString())) {
     changed = true
-    await writeFile(PROJECT_CACHE_PATH, hash)
+    await writeFile(join(PROJECT_CACHE_PATH, 'hash'), hash)
   }
   return { changed, hash: hash.toString(), project }
 }
