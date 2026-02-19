@@ -5,13 +5,13 @@ import config from './config.js'
 
 const globIt = async (targets) => {
   const files = []
-
   const _files = glob(targets)
+  const promises = []
   for await (const file of _files) {
-    const stats = await stat(file)
-    if (stats.isFile()) files.push(file)
+    promises.push(stat(file).then((stats) => (stats.isFile() ? file : null)))
   }
-  return files
+  const results = await Promise.all(promises)
+  return results.filter((file) => file !== null)
 }
 
 export const transformWorkspace = async (root, target) => {

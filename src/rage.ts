@@ -2,7 +2,7 @@ import { readdir, mkdir, open, stat, readFile, writeFile } from 'fs/promises'
 import { join, parse } from 'path'
 import { CACHE_PATH } from './constants.js'
 import hashit from './hashit.js'
-import { spawnSync } from 'child_process'
+import { spawn } from 'child_process'
 import Listr from 'listr'
 import semver from 'semver'
 
@@ -15,20 +15,24 @@ import { log } from 'console'
 export const build = async () => {
   const build = async (root, project) =>
     new Promise((resolve) => {
-      try {
-        const spawnee = spawnSync(`npm run build`, { cwd: join(process.cwd(), root, project ?? ''), shell: true })
-        // todo better error handling
-        if (process.argv.includes('--log')) {
-          const stderr = spawnee.stderr.toString()
-          // if (stderr.includes('ERR') || stderr.includes('error')) console.warn(stderr)
+      const spawnee = spawn(`npm run build`, { cwd: join(process.cwd(), root, project ?? ''), shell: true })
+
+      let stderr = ''
+
+      if (process.argv.includes('--log')) {
+        spawnee.stderr.on('data', (data) => {
+          stderr += data.toString()
+        })
+      }
+
+      spawnee.on('close', () => {
+        if (process.argv.includes('--log') && (stderr.includes('ERR') || stderr.includes('error'))) {
+          console.warn(stderr)
         }
         resolve(true)
-      } catch (error) {
-        // console.log(error.message)
-        // if (error.message.includes('Missing script: "build"')) {
-        //   console.warn(`no npm run build command present for ${project}`)
-        // }
-      }
+      })
+
+      spawnee.on('error', () => resolve(true))
     })
   let projectDirs
 
@@ -66,15 +70,15 @@ export const build = async () => {
     try {
       for (const result of results) {
         if (result) {
-          if (count === config.availableCpuCores) {
-            await Promise.all(promises)
-            promises = []
-            count = 0
-          }
           if (result.changed || process.argv.includes('--all')) {
+            if (count === config.availableCpuCores) {
+              await Promise.all(promises)
+              promises = []
+              count = 0
+            }
             promises.push(build(config.root, result.project))
+            count += 1
           }
-          count += 1
         }
       }
 
@@ -130,26 +134,30 @@ export const build = async () => {
 const versionTask = (project, type) =>
   new Promise((resolve) => {
     log(`bumping version for ${project !== '' ? project : config.dirname}`)
-    try {
-      const spawnee = spawnSync(`npm version ${type}`, {
-        cwd: join(process.cwd(), config.root, project),
-        shell: true
-      })
-      const version = spawnee.stdout.toString().replace('\n', '')
+    const spawnee = spawn(`npm version ${type}`, {
+      cwd: join(process.cwd(), config.root, project),
+      shell: true
+    })
+    let stdout = ''
+    spawnee.stdout.on('data', (data) => (stdout += data))
+    spawnee.on('close', () => {
+      const version = stdout.toString().replace('\n', '')
       console.log(`bumped version to ${version}`)
       resolve(true)
-    } catch (error) {}
+    })
+    spawnee.on('error', () => resolve(true))
   })
 
 const publishTask = (project, otp) =>
   new Promise((resolve) => {
-    const spawnee = spawnSync(`npm publish --otp=${otp}`, {
+    const spawnee = spawn(`npm publish --otp=${otp}`, {
       cwd: join(process.cwd(), config.root, project ?? ''),
       shell: true
     })
-    resolve(true)
-    log(spawnee.stdout.toString())
-    log(spawnee.stderr.toString())
+    spawnee.stdout.on('data', (data) => log(data.toString()))
+    spawnee.stderr.on('data', (data) => log(data.toString()))
+    spawnee.on('close', () => resolve(true))
+    spawnee.on('error', () => resolve(true))
   })
 
 const versionChange = async ({ project }) => {
