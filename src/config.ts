@@ -8,7 +8,7 @@ const configFileOptions = ['rage.config.js', 'rage.config.json', 'rage.config', 
 let config = DEFAULT_CONFIG
 const cwd = process.cwd()
 
-const tryRead = async (path) => {
+const tryRead = async (path: string) => {
   try {
     const fd = await open(path)
     const data = await fd.read()
@@ -17,7 +17,7 @@ const tryRead = async (path) => {
   } catch (error) {}
 }
 
-const tryReadConfig = async (path) => {
+const tryReadConfig = async (path: string) => {
   const files = configFileOptions.map((file) => join(path, file))
   let data
   for (const file of files) {

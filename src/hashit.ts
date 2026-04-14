@@ -3,7 +3,18 @@ import { createHash } from 'crypto'
 import { join } from 'path'
 import { CACHE_PATH } from './constants.js'
 
-const readAndCache = async (file) => {
+type HashProject = {
+  project: string
+  files: string[]
+}
+
+type HashResult = {
+  changed: boolean
+  hash: string
+  project: string
+}
+
+const readAndCache = async (file: string): Promise<string> => {
   try {
     const content = await readFile(file)
     const hash = createHash('SHA1')
@@ -15,17 +26,17 @@ const readAndCache = async (file) => {
   }
 }
 
-const _createHash = (input) => {
+const _createHash = (input: string): string => {
   const hash = createHash('SHA1')
   hash.update(input)
   return hash.digest('hex')
 }
 
-export default async ({ project, files }, target) => {
+export default async ({ project, files }: HashProject, _target: string): Promise<HashResult | undefined> => {
   let changed = false
-  let originalHash
-  let hash
-  const hashes = []
+  let originalHash: string | undefined
+  let hash: string
+  const hashes: string[] = []
   const concurrency = 100
 
   for (let i = 0; i < files.length; i += concurrency) {

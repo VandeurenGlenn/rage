@@ -3,10 +3,16 @@ import { join, parse } from 'path'
 import { CACHE_PATH } from './constants.js'
 import config from './config.js'
 
-const globIt = async (targets) => {
-  const files = []
+type WorkspaceProject = {
+  root: string
+  project: string
+  files: string[]
+}
+
+const globIt = async (targets: string[]): Promise<string[]> => {
+  const files: string[] = []
   const _files = glob(targets)
-  const promises = []
+  const promises: Promise<string | null>[] = []
   for await (const file of _files) {
     promises.push(stat(file).then((stats) => (stats.isFile() ? file : null)))
   }
@@ -14,14 +20,15 @@ const globIt = async (targets) => {
   return results.filter((file) => file !== null)
 }
 
-export const transformWorkspace = async (root, target) => {
-  if (!Array.isArray(target)) target = [target]
+export const transformWorkspace = async (root: string, target: string | string[]): Promise<WorkspaceProject[]> => {
+  const targetsToMatch = Array.isArray(target) ? target : [target]
+
   if (config.monorepo) {
     return Promise.all(
       (await readdir(root)).map(async (project) => {
-        const targets = []
-        let files = []
-        for (const _target of target) {
+        const targets: string[] = []
+        let files: string[] = []
+        for (const _target of targetsToMatch) {
           const parsed = parse(_target)
           if (parsed.ext) {
             targets.push(`${root}/${project}/${_target}`)
@@ -32,15 +39,15 @@ export const transformWorkspace = async (root, target) => {
         try {
           files = await globIt(targets)
         } catch (error) {
-          console.warn(`nothing found for, ${join(root, project, target)}`)
+          console.warn(`nothing found for, ${join(root, project, targetsToMatch.join(','))}`)
         }
         return { root, project, files }
       })
     )
   } else {
-    const targets = []
-    let files = []
-    for (const _target of target) {
+    const targets: string[] = []
+    let files: string[] = []
+    for (const _target of targetsToMatch) {
       const parsed = parse(_target)
       if (parsed.ext) {
         targets.push(`${root}/${_target}`)
@@ -51,7 +58,7 @@ export const transformWorkspace = async (root, target) => {
     try {
       files = await globIt(targets)
     } catch (error) {
-      console.warn(`nothing found for, ${join(root, target)}`)
+      console.warn(`nothing found for, ${join(root, targetsToMatch.join(','))}`)
     }
     return [{ root, project: '', files }]
   }
