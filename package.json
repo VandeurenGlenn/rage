@@ -15,7 +15,7 @@
   },
   "keywords": [],
   "bin": {
-    "rage": "./exports/index.js"
+    "rage": "./exports/cli.js"
   },
   "files": [
     "exports"
@@ -24,6 +24,7 @@
   "license": "MIT",
   "dependencies": {
     "listr2": "^10.2.1",
+    "meow": "^14.1.0",
     "semver": "^7.7.4"
   },
   "devDependencies": {
