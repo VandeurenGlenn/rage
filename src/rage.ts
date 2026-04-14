@@ -24,8 +24,22 @@ type ChangeResult = {
 }
 
 type VersionType = 'patch' | 'minor' | 'major'
+type ProgressTask = {
+  title: string | any[]
+  output: string | any[]
+}
 
 const priorityProjectsConfig = config.priority as string[]
+
+const updateTaskProgress = (task: ProgressTask, title: string, completed: number, total: number, project: string) => {
+  task.title = `${title} (${completed}/${total} done)`
+  task.output = project ? `last completed: ${project}` : ''
+}
+
+const updateTaskNoop = (task: ProgressTask, title: string) => {
+  task.title = `${title} (0/0 done)`
+  task.output = 'no changed projects'
+}
 
 export const build = async () => {
   const build = async (root: string, project = '') =>
@@ -81,35 +95,69 @@ export const build = async () => {
     }
   }
 
-  const buildPriority = async () => {
+  const buildPriority = async (task: ProgressTask) => {
     if (priorityProjects.length === 0) return
     const results = await Promise.all(priorityProjects.map((project) => hashit(project, config.src)))
+    const projectsToBuild: string[] = []
+
     for (const result of results) {
-      if (result) {
-        if (result.changed || process.argv.includes('--all'))
-          if (priorityProjectsConfig.includes(result.project)) await build(config.root, result.project)
+      if (
+        result &&
+        (result.changed || process.argv.includes('--all')) &&
+        priorityProjectsConfig.includes(result.project)
+      ) {
+        projectsToBuild.push(result.project)
       }
+    }
+
+    if (projectsToBuild.length === 0) return
+
+    for (const [index, project] of projectsToBuild.entries()) {
+      await build(config.root, project)
+      updateTaskProgress(task, 'building priority projects', index + 1, projectsToBuild.length, project)
     }
   }
 
-  const buildNonPriority = async () => {
+  const createTrackedBuild = (root: string, project: string, onComplete: () => void): Promise<boolean> =>
+    build(root, project).then((value) => {
+      onComplete()
+      return value
+    })
+
+  const buildNonPriority = async (task: ProgressTask) => {
     if (nonPriorityProjects.length === 0) return
     const results = await Promise.all(nonPriorityProjects.map((project) => hashit(project, config.src)))
+    const projectsToBuild: string[] = []
+
+    for (const result of results) {
+      if (result && (result.changed || process.argv.includes('--all'))) {
+        projectsToBuild.push(result.project)
+      }
+    }
+
+    if (projectsToBuild.length === 0) {
+      updateTaskNoop(task, 'building non priority projects')
+      return
+    }
+
+    let completed = 0
     let promises: Promise<boolean>[] = []
     let count = 0
     try {
-      for (const result of results) {
-        if (result) {
-          if (result.changed || process.argv.includes('--all')) {
-            if (count === config.availableCpuCores) {
-              await Promise.all(promises)
-              promises = []
-              count = 0
-            }
-            promises.push(build(config.root, result.project))
-            count += 1
-          }
+      for (const project of projectsToBuild) {
+        if (count === config.availableCpuCores) {
+          await Promise.all(promises)
+          promises = []
+          count = 0
         }
+
+        promises.push(
+          createTrackedBuild(config.root, project, () => {
+            completed += 1
+            updateTaskProgress(task, 'building non priority projects', completed, projectsToBuild.length, project)
+          })
+        )
+        count += 1
       }
 
       if (promises.length > 0) await Promise.all(promises)
@@ -128,35 +176,22 @@ export const build = async () => {
   const tasks = new Listr([
     {
       title: 'Check requirements',
-      task: () =>
-        new Listr([
-          {
-            title: 'cache',
-            task: () => checkCache()
-          }
-        ])
+      task: () => checkCache()
     },
     {
       title: 'Get projects',
-      task: () =>
-        new Listr([
-          {
-            title: 'getting projects',
-            task: async () => (projectDirs = await transformWorkspace(config.root, config.src))
-          }
-        ])
+      task: async () => (projectDirs = await transformWorkspace(config.root, config.src))
     },
     {
       title: 'Build projects',
-      task: () =>
-        new Listr([
-          { title: 'sorting projects', task: () => sortProjects() },
-          { title: 'building priority projects', task: () => buildPriority() },
-          {
-            title: 'building non priority projects',
-            task: () => buildNonPriority()
-          }
-        ])
+      task: async (_ctx, task) => {
+        task.title = 'Build projects (sorting)'
+        sortProjects()
+        task.title = 'Build projects (priority phase)'
+        await buildPriority(task)
+        task.title = 'Build projects (non-priority phase)'
+        await buildNonPriority(task)
+      }
     }
   ])
   await tasks.run()
@@ -211,26 +246,63 @@ const versionChange = async ({ project }: Pick<WorkspaceProject, 'project'>): Pr
   return { changed: false, project }
 }
 
-const publishProjects = async (projects: WorkspaceProject[], otp: string | null) => {
+const publishProjects = async (projects: WorkspaceProject[], otp: string | null, task: ProgressTask) => {
   const results = await Promise.all(projects.map((project) => versionChange(project)))
+  const projectsToPublish: string[] = []
 
-  const promises: Promise<boolean>[] = []
   for (const result of results) {
-    if (result) {
-      if (result.changed || process.argv.includes('--all')) promises.push(publishTask(result.project, otp))
+    if (result && (result.changed || process.argv.includes('--all'))) {
+      projectsToPublish.push(result.project)
     }
   }
+
+  if (projectsToPublish.length === 0) {
+    updateTaskNoop(task, 'publishing projects')
+    return
+  }
+
+  let completed = 0
+  const promises: Promise<boolean>[] = []
+  for (const project of projectsToPublish) {
+    promises.push(
+      publishTask(project, otp).then((value) => {
+        completed += 1
+        updateTaskProgress(task, 'publishing projects', completed, projectsToPublish.length, project)
+        return value
+      })
+    )
+  }
+
   await Promise.allSettled(promises)
 }
 
-const versionProjects = async (projects: WorkspaceProject[], type: VersionType) => {
+const versionProjects = async (projects: WorkspaceProject[], type: VersionType, task: ProgressTask) => {
   const results = await Promise.all(projects.map((project) => hashit(project, config.exports)))
-  const promises: Promise<boolean>[] = []
+  const projectsToVersion: string[] = []
+
   for (const result of results) {
-    if (result) {
-      if (result.changed || process.argv.includes('--all')) promises.push(versionTask(result.project, type))
+    if (result && (result.changed || process.argv.includes('--all'))) {
+      projectsToVersion.push(result.project)
     }
   }
+
+  if (projectsToVersion.length === 0) {
+    updateTaskNoop(task, `${type} versions`)
+    return
+  }
+
+  let completed = 0
+  const promises: Promise<boolean>[] = []
+  for (const project of projectsToVersion) {
+    promises.push(
+      versionTask(project, type).then((value) => {
+        completed += 1
+        updateTaskProgress(task, `${type} versions`, completed, projectsToVersion.length, project)
+        return value
+      })
+    )
+  }
+
   await Promise.allSettled(promises)
 }
 
@@ -240,32 +312,16 @@ export const patch = async () => {
   const tasks = new Listr([
     {
       title: 'Check requirements',
-      task: () =>
-        new Listr([
-          {
-            title: 'cache',
-            task: () => checkCache()
-          }
-        ])
+      task: () => checkCache()
     },
     {
       title: 'Get projects',
-      task: () =>
-        new Listr([
-          {
-            title: 'getting projects',
-            task: async () =>
-              (projectDirs = await transformWorkspace(config.root, [
-                config.exports,
-                'package.json',
-                'packages.lock.json'
-              ]))
-          }
-        ])
+      task: async () =>
+        (projectDirs = await transformWorkspace(config.root, [config.exports, 'package.json', 'packages.lock.json']))
     },
     {
       title: 'Version projects',
-      task: async () => versionProjects(projectDirs, 'patch')
+      task: async (_ctx, task) => versionProjects(projectDirs, 'patch', task)
     }
   ])
   await tasks.run()
@@ -277,32 +333,16 @@ export const minor = async () => {
   const tasks = new Listr([
     {
       title: 'Check requirements',
-      task: () =>
-        new Listr([
-          {
-            title: 'cache',
-            task: () => checkCache()
-          }
-        ])
+      task: () => checkCache()
     },
     {
       title: 'Get projects',
-      task: () =>
-        new Listr([
-          {
-            title: 'getting projects',
-            task: async () =>
-              (projectDirs = await transformWorkspace(config.root, [
-                config.exports,
-                'package.json',
-                'packages.lock.json'
-              ]))
-          }
-        ])
+      task: async () =>
+        (projectDirs = await transformWorkspace(config.root, [config.exports, 'package.json', 'packages.lock.json']))
     },
     {
       title: 'Version projects',
-      task: async () => versionProjects(projectDirs, 'minor')
+      task: async (_ctx, task) => versionProjects(projectDirs, 'minor', task)
     }
   ])
   await tasks.run()
@@ -314,28 +354,15 @@ export const major = async () => {
   const tasks = new Listr([
     {
       title: 'Check requirements',
-      task: () =>
-        new Listr([
-          {
-            title: 'cache',
-            task: () => checkCache()
-          }
-        ])
+      task: () => checkCache()
     },
     {
       title: 'Get projects',
-      task: () =>
-        new Listr([
-          {
-            title: 'getting projects',
-            task: async () =>
-              (projectDirs = await transformWorkspace(config.root, [config.exports, config.dependencies]))
-          }
-        ])
+      task: async () => (projectDirs = await transformWorkspace(config.root, [config.exports, config.dependencies]))
     },
     {
       title: 'Version projects',
-      task: async () => versionProjects(projectDirs, 'major')
+      task: async (_ctx, task) => versionProjects(projectDirs, 'major', task)
     }
   ])
   await tasks.run()
@@ -351,32 +378,16 @@ export const publish = async () => {
   const tasks = new Listr([
     {
       title: 'Check requirements',
-      task: () =>
-        new Listr([
-          {
-            title: 'cache',
-            task: () => checkCache()
-          }
-        ])
+      task: () => checkCache()
     },
     {
       title: 'Get projects',
-      task: () =>
-        new Listr([
-          {
-            title: 'getting projects',
-            task: async () =>
-              (projectDirs = await transformWorkspace(config.root, [
-                config.exports,
-                'package.json',
-                'packages.lock.json'
-              ]))
-          }
-        ])
+      task: async () =>
+        (projectDirs = await transformWorkspace(config.root, [config.exports, 'package.json', 'packages.lock.json']))
     },
     {
       title: 'Publish projects',
-      task: async () => publishProjects(projectDirs, otp)
+      task: async (_ctx, task) => publishProjects(projectDirs, otp, task)
     }
   ])
   await tasks.run()
