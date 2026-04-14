@@ -1,7 +1,5 @@
 .builder-cache
 
-exports/**/*
-
-!exports/index.js
+exports
 
 node_modules
