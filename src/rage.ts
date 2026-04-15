@@ -29,7 +29,18 @@ type ProgressTask = {
   output: string | any[]
 }
 
+const DEFAULT_BUILD_TIMEOUT_MS = 10 * 60 * 1000
+const DEFAULT_JOB_TIMEOUT_MS = 10 * 60 * 1000
+
 const priorityProjectsConfig = config.priority as string[]
+
+const hasErrorSignal = (value: string) => /(error|err|failed|fatal|exception)/i.test(value)
+
+const logStderrSignal = (scope: string, project: string, value: string) => {
+  if (!hasErrorSignal(value)) return
+  const label = project || config.dirname
+  console.warn(`[${scope}] stderr signal for ${label}: ${value.trim()}`)
+}
 
 const updateTaskProgress = (task: ProgressTask, title: string, completed: number, total: number, project: string) => {
   task.title = `${title} (${completed}/${total} done)`
@@ -44,11 +55,28 @@ const updateTaskNoop = (task: ProgressTask, title: string) => {
 export const build = async () => {
   const build = async (root: string, project = '') =>
     new Promise<boolean>((resolve, reject) => {
-      const spawnee = spawn(`npm run build`, { cwd: join(process.cwd(), root, project ?? ''), shell: true })
+      const spawnee = spawn(`npm run build`, {
+        cwd: join(process.cwd(), root, project ?? ''),
+        shell: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
       const shouldLog = process.argv.includes('--log')
+      const timeoutMs = Number(process.env.RAGE_BUILD_TIMEOUT_MS ?? DEFAULT_BUILD_TIMEOUT_MS)
 
       let stdout = ''
       let stderr = ''
+      let timedOut = false
+
+      const timeout = setTimeout(() => {
+        timedOut = true
+        console.error(`build timed out after ${timeoutMs}ms for ${project || config.dirname}`)
+        spawnee.kill('SIGTERM')
+      }, timeoutMs)
+
+      spawnee.stdin.on('error', (error: Error) => {
+        console.error(`build stdin stream error for ${project || config.dirname}: ${error.message}`)
+      })
+      spawnee.stdin.end()
 
       spawnee.stdout.on('data', (data) => {
         const chunk = data.toString()
@@ -59,13 +87,21 @@ export const build = async () => {
       spawnee.stderr.on('data', (data) => {
         const chunk = data.toString()
         stderr += chunk
+        if (!shouldLog) logStderrSignal('build', project, chunk)
         if (shouldLog) process.stderr.write(chunk)
       })
 
       spawnee.on('close', (code) => {
+        clearTimeout(timeout)
+
+        if (timedOut) {
+          reject(new Error(`build timed out after ${timeoutMs}ms for ${project || config.dirname}`))
+          return
+        }
+
         if (code === 0) {
-          if (shouldLog && (stderr.includes('ERR') || stderr.includes('error'))) {
-            console.warn(stderr)
+          if (stderr.trim()) {
+            logStderrSignal('build', project, stderr)
           }
           resolve(true)
           return
@@ -75,6 +111,7 @@ export const build = async () => {
       })
 
       spawnee.on('error', (error) => {
+        clearTimeout(timeout)
         reject(error)
       })
     })
@@ -198,32 +235,109 @@ export const build = async () => {
 }
 
 const versionTask = (project: string, type: VersionType) =>
-  new Promise<boolean>((resolve) => {
+  new Promise<boolean>((resolve, reject) => {
     log(`bumping version for ${project !== '' ? project : config.dirname}`)
+    const timeoutMs = Number(process.env.RAGE_JOB_TIMEOUT_MS ?? DEFAULT_JOB_TIMEOUT_MS)
     const spawnee = spawn(`npm version ${type}`, {
       cwd: join(process.cwd(), config.root, project),
-      shell: true
+      shell: true,
+      stdio: ['pipe', 'pipe', 'pipe']
     })
+    let stderr = ''
+    let timedOut = false
+    const timeout = setTimeout(() => {
+      timedOut = true
+      console.error(`version ${type} timed out after ${timeoutMs}ms for ${project || config.dirname}`)
+      spawnee.kill('SIGTERM')
+    }, timeoutMs)
+
+    spawnee.stdin.on('error', (error: Error) => {
+      console.error(`version stdin stream error for ${project || config.dirname}: ${error.message}`)
+    })
+    spawnee.stdin.end()
+
     let stdout = ''
     spawnee.stdout.on('data', (data) => (stdout += data))
-    spawnee.on('close', () => {
-      const version = stdout.toString().replace('\n', '')
-      console.log(`bumped version to ${version}`)
-      resolve(true)
+
+    spawnee.stderr.on('data', (data) => {
+      const chunk = data.toString()
+      stderr += chunk
+      logStderrSignal('version', project, chunk)
     })
-    spawnee.on('error', () => resolve(true))
+
+    spawnee.on('close', (code) => {
+      clearTimeout(timeout)
+
+      if (timedOut) {
+        reject(new Error(`version ${type} timed out after ${timeoutMs}ms for ${project || config.dirname}`))
+        return
+      }
+
+      const version = stdout.toString().replace('\n', '')
+      if (code === 0) {
+        if (stderr.trim()) logStderrSignal('version', project, stderr)
+        console.log(`bumped version to ${version}`)
+        resolve(true)
+        return
+      }
+
+      reject(new Error(stderr.trim() || `npm version ${type} failed for ${project || config.dirname}`))
+    })
+
+    spawnee.on('error', (error) => {
+      clearTimeout(timeout)
+      reject(error)
+    })
   })
 
 const publishTask = (project: string, otp: string | null) =>
-  new Promise<boolean>((resolve) => {
+  new Promise<boolean>((resolve, reject) => {
+    const timeoutMs = Number(process.env.RAGE_JOB_TIMEOUT_MS ?? DEFAULT_JOB_TIMEOUT_MS)
     const spawnee = spawn(`npm publish --otp=${otp}`, {
       cwd: join(process.cwd(), config.root, project ?? ''),
-      shell: true
+      shell: true,
+      stdio: ['pipe', 'pipe', 'pipe']
     })
+    let stderr = ''
+    let timedOut = false
+    const timeout = setTimeout(() => {
+      timedOut = true
+      console.error(`publish timed out after ${timeoutMs}ms for ${project || config.dirname}`)
+      spawnee.kill('SIGTERM')
+    }, timeoutMs)
+
+    spawnee.stdin.on('error', (error: Error) => {
+      console.error(`publish stdin stream error for ${project || config.dirname}: ${error.message}`)
+    })
+    spawnee.stdin.end()
+
     spawnee.stdout.on('data', (data) => log(data.toString()))
-    spawnee.stderr.on('data', (data) => log(data.toString()))
-    spawnee.on('close', () => resolve(true))
-    spawnee.on('error', () => resolve(true))
+    spawnee.stderr.on('data', (data) => {
+      const chunk = data.toString()
+      stderr += chunk
+      log(data.toString())
+      logStderrSignal('publish', project, chunk)
+    })
+    spawnee.on('close', (code) => {
+      clearTimeout(timeout)
+
+      if (timedOut) {
+        reject(new Error(`publish timed out after ${timeoutMs}ms for ${project || config.dirname}`))
+        return
+      }
+
+      if (code === 0) {
+        if (stderr.trim()) logStderrSignal('publish', project, stderr)
+        resolve(true)
+        return
+      }
+
+      reject(new Error(stderr.trim() || `npm publish failed for ${project || config.dirname}`))
+    })
+    spawnee.on('error', (error) => {
+      clearTimeout(timeout)
+      reject(error)
+    })
   })
 
 const versionChange = async ({ project }: Pick<WorkspaceProject, 'project'>): Promise<ChangeResult> => {
