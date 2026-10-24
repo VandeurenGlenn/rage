@@ -1,5 +1,5 @@
-import { readdir, mkdir, open, stat, readFile, writeFile } from 'fs/promises'
-import { join, parse } from 'path'
+import { readFile, writeFile } from 'fs/promises'
+import { join } from 'path'
 import { CACHE_PATH } from './constants.js'
 import hashit from './hashit.js'
 import { spawn } from 'child_process'
@@ -9,6 +9,7 @@ import semver from 'semver'
 import config from './config.js'
 import { checkCache, transformWorkspace } from './utils.js'
 import { log } from 'console'
+import { buildWorkspace } from './workspace-build.js'
 
 // console.time('build time')
 
@@ -29,10 +30,7 @@ type ProgressTask = {
   output: string | any[]
 }
 
-const DEFAULT_BUILD_TIMEOUT_MS = 10 * 60 * 1000
 const DEFAULT_JOB_TIMEOUT_MS = 10 * 60 * 1000
-
-const priorityProjectsConfig = config.priority as string[]
 
 const hasErrorSignal = (value: string) => /(error|err|failed|fatal|exception)/i.test(value)
 
@@ -52,186 +50,20 @@ const updateTaskNoop = (task: ProgressTask, title: string) => {
   task.output = 'no changed projects'
 }
 
-export const build = async () => {
-  const build = async (root: string, project = '') =>
-    new Promise<boolean>((resolve, reject) => {
-      const spawnee = spawn(`npm run build`, {
-        cwd: join(process.cwd(), root, project ?? ''),
-        shell: true,
-        stdio: ['pipe', 'pipe', 'pipe']
-      })
-      const shouldLog = process.argv.includes('--log')
-      const timeoutMs = Number(process.env.RAGE_BUILD_TIMEOUT_MS ?? DEFAULT_BUILD_TIMEOUT_MS)
-
-      let stdout = ''
-      let stderr = ''
-      let timedOut = false
-
-      const timeout = setTimeout(() => {
-        timedOut = true
-        console.error(`build timed out after ${timeoutMs}ms for ${project || config.dirname}`)
-        spawnee.kill('SIGTERM')
-      }, timeoutMs)
-
-      spawnee.stdin.on('error', (error: Error) => {
-        console.error(`build stdin stream error for ${project || config.dirname}: ${error.message}`)
-      })
-      spawnee.stdin.end()
-
-      spawnee.stdout.on('data', (data) => {
-        const chunk = data.toString()
-        if (shouldLog) process.stdout.write(chunk)
-        else stdout += chunk
-      })
-
-      spawnee.stderr.on('data', (data) => {
-        const chunk = data.toString()
-        stderr += chunk
-        if (!shouldLog) logStderrSignal('build', project, chunk)
-        if (shouldLog) process.stderr.write(chunk)
-      })
-
-      spawnee.on('close', (code) => {
-        clearTimeout(timeout)
-
-        if (timedOut) {
-          reject(new Error(`build timed out after ${timeoutMs}ms for ${project || config.dirname}`))
-          return
-        }
-
-        if (code === 0) {
-          if (stderr.trim()) {
-            logStderrSignal('build', project, stderr)
-          }
-          resolve(true)
-          return
-        }
-
-        reject(new Error(stderr.trim() || stdout.trim() || `npm run build failed for ${project || config.dirname}`))
-      })
-
-      spawnee.on('error', (error) => {
-        clearTimeout(timeout)
-        reject(error)
-      })
-    })
-  let projectDirs: WorkspaceProject[] = []
-
-  const priorityProjects: WorkspaceProject[] = []
-
-  const nonPriorityProjects: WorkspaceProject[] = []
-
-  const sortProjects = () => {
-    for (const project of [...projectDirs]) {
-      if (priorityProjectsConfig.includes(project.project)) {
-        projectDirs.slice(projectDirs.indexOf(project), 1)
-        priorityProjects.push(project)
-      } else {
-        nonPriorityProjects.push(project)
-      }
+export const build = async (options: { jobs?: number; dryRun?: boolean } = {}) => {
+  const plan = await buildWorkspace({
+    legacyRoot: config.monorepo ? config.root : undefined,
+    priority: config.priority,
+    outputDirectory: config.exports,
+    all: process.argv.includes('--all') || process.argv.includes('-a'),
+    log: process.argv.includes('--log') || process.argv.includes('-l'),
+    ...options
+  })
+  if (options.dryRun) {
+    for (const project of plan) {
+      console.log(`${project.build ? 'BUILD' : 'SKIP'} ${project.name} (${project.reason})${project.dependencies.length ? ' after ' + project.dependencies.join(', ') : ''}`)
     }
   }
-
-  const buildPriority = async (task: ProgressTask) => {
-    if (priorityProjects.length === 0) return
-    const results = await Promise.all(priorityProjects.map((project) => hashit(project, config.src)))
-    const projectsToBuild: string[] = []
-
-    for (const result of results) {
-      if (
-        result &&
-        (result.changed || process.argv.includes('--all')) &&
-        priorityProjectsConfig.includes(result.project)
-      ) {
-        projectsToBuild.push(result.project)
-      }
-    }
-
-    if (projectsToBuild.length === 0) return
-
-    for (const [index, project] of projectsToBuild.entries()) {
-      await build(config.root, project)
-      updateTaskProgress(task, 'building priority projects', index + 1, projectsToBuild.length, project)
-    }
-  }
-
-  const createTrackedBuild = (root: string, project: string, onComplete: () => void): Promise<boolean> =>
-    build(root, project).then((value) => {
-      onComplete()
-      return value
-    })
-
-  const buildNonPriority = async (task: ProgressTask) => {
-    if (nonPriorityProjects.length === 0) return
-    const results = await Promise.all(nonPriorityProjects.map((project) => hashit(project, config.src)))
-    const projectsToBuild: string[] = []
-
-    for (const result of results) {
-      if (result && (result.changed || process.argv.includes('--all'))) {
-        projectsToBuild.push(result.project)
-      }
-    }
-
-    if (projectsToBuild.length === 0) {
-      updateTaskNoop(task, 'building non priority projects')
-      return
-    }
-
-    let completed = 0
-    let promises: Promise<boolean>[] = []
-    let count = 0
-    try {
-      for (const project of projectsToBuild) {
-        if (count === config.availableCpuCores) {
-          await Promise.all(promises)
-          promises = []
-          count = 0
-        }
-
-        promises.push(
-          createTrackedBuild(config.root, project, () => {
-            completed += 1
-            updateTaskProgress(task, 'building non priority projects', completed, projectsToBuild.length, project)
-          })
-        )
-        count += 1
-      }
-
-      if (promises.length > 0) await Promise.all(promises)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      console.log(message)
-      if (message.includes('Missing script: "build"')) {
-        console.warn(`no npm run build command present}`)
-      }
-      throw error
-    }
-  }
-
-  // const result = await Promise.all(promises)
-  // console.log(result)
-  const tasks = new Listr([
-    {
-      title: 'Check requirements',
-      task: () => checkCache()
-    },
-    {
-      title: 'Get projects',
-      task: async () => (projectDirs = await transformWorkspace(config.root, config.src))
-    },
-    {
-      title: 'Build projects',
-      task: async (_ctx, task) => {
-        task.title = 'Build projects (sorting)'
-        sortProjects()
-        task.title = 'Build projects (priority phase)'
-        await buildPriority(task)
-        task.title = 'Build projects (non-priority phase)'
-        await buildNonPriority(task)
-      }
-    }
-  ])
-  await tasks.run()
 }
 
 const versionTask = (project: string, type: VersionType) =>

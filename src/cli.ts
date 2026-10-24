@@ -13,7 +13,8 @@ if ('error' in resolution) {
 
 try {
   time(resolution.action)
-  await actions[resolution.action]()
+  if (resolution.action === 'build') await actions.build({ jobs: cli.flags.jobs, dryRun: cli.flags.dryRun })
+  else await actions[resolution.action]()
   timeEnd(resolution.action)
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error))

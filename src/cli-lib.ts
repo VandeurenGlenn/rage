@@ -49,6 +49,8 @@ const helpText = `
       --publish       Publish changed packages
       --all, -a       Run against all projects instead of changed ones
       --log, -l       Stream child build output
+      --jobs, -j      Maximum concurrent builds (positive integer)
+      --dry-run      Show the workspace build plan without running scripts
       --otp <code>    Pass an npm OTP when publishing
 
     Examples
@@ -93,6 +95,13 @@ export const createCli = (importMeta: ImportMeta, argv = process.argv.slice(2)) 
       log: {
         type: 'boolean',
         shortFlag: 'l'
+      },
+      jobs: {
+        type: 'number',
+        shortFlag: 'j'
+      },
+      dryRun: {
+        type: 'boolean'
       },
       otp: {
         type: 'string'

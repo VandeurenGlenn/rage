@@ -18,6 +18,12 @@ test('resolveAction returns a command action', () => {
   assert.deepEqual(resolveAction(['build'], {}), { action: 'build' })
 })
 
+test('createCli parses bounded concurrency and a read-only workspace plan', () => {
+  const cli = createCli(importMeta, ['build', '--jobs', '2', '--dry-run'])
+  assert.equal(cli.flags.jobs, 2)
+  assert.equal(cli.flags.dryRun, true)
+})
+
 test('resolveAction returns an action selected by flag', () => {
   assert.deepEqual(resolveAction([], { patch: true }), { action: 'patch' })
 })
