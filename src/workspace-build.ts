@@ -185,15 +185,19 @@ const runBuild = (project: BuildProject, root: string, log: boolean, timeoutMs: 
     return
   }
   const windows = process.platform === 'win32'
-  if (windows && project.workspace && /[&|<>^%"\s]/.test(project.name)) {
+  if (windows && project.workspace && /[&|<>^%"\s()]/.test(project.name)) {
     reject(new Error(`unsafe npm workspace name: ${project.name}`))
     return
   }
   const args = project.workspace
     ? ['run', 'build', '--workspace', project.name, '--include-workspace-root=false']
     : ['run', 'build', '--workspaces=false']
-  const child = spawn(windows ? 'npm.cmd' : 'npm', args, {
-    cwd: project.workspace ? root : project.directory, shell: windows, detached: !windows, stdio: ['ignore', 'pipe', 'pipe'],
+  // npm.cmd needs cmd.exe on Windows. Pass one validated command explicitly,
+  // not the deprecated shell:true + args combination (DEP0190).
+  const executable = windows ? process.env.ComSpec ?? 'cmd.exe' : 'npm'
+  const commandArgs = windows ? ['/d', '/s', '/v:off', '/c', `npm.cmd ${args.join(' ')}`] : args
+  const child = spawn(executable, commandArgs, {
+    cwd: project.workspace ? root : project.directory, shell: false, detached: !windows, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, RAGE_INTERNAL_BUILD_STACK: JSON.stringify([...stack, project.directory]) }
   })
   let output = ''

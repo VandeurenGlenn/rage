@@ -250,8 +250,8 @@ test('npm workspace lifecycle preserves the root prefix and the package working 
     await f.project('packages/context', 'context', {}, `
       import assert from 'node:assert/strict';
       import {mkdirSync,realpathSync,writeFileSync} from 'node:fs';
-      assert.equal(realpathSync(process.env.npm_config_local_prefix),realpathSync(${JSON.stringify(f.root)}));
-      assert.equal(realpathSync(process.cwd()),realpathSync(${JSON.stringify(join(f.root, 'packages/context'))}));
+      assert.equal(realpathSync.native(process.env.npm_config_local_prefix),realpathSync.native(${JSON.stringify(f.root)}));
+      assert.equal(realpathSync.native(process.cwd()),realpathSync.native(${JSON.stringify(join(f.root, 'packages/context'))}));
       mkdirSync('dist');writeFileSync('dist/index.js','built');
     `)
     assert.deepEqual(built(await buildWorkspace({ cwd: f.root })), ['context'])

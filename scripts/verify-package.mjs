@@ -9,9 +9,18 @@ import { fileURLToPath } from 'node:url'
 const project = fileURLToPath(new URL('..', import.meta.url))
 const temporary = realpathSync(mkdtempSync(join(tmpdir(), 'rage-package-')))
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-const run = (command, args, cwd = temporary) => execFileSync(command, args, {
-  cwd, timeout: 120_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' && command === npm
-})
+const run = (command, args, cwd = temporary) => {
+  // This verification is launched through npm run test:package, which supplies
+  // npm's JS entrypoint. Execute that with Node instead of shell:true + args.
+  if (process.platform === 'win32' && command === npm) {
+    assert.ok(process.env.npm_execpath, 'run this check through npm run test:package')
+    args = [process.env.npm_execpath, ...args]
+    command = process.execPath
+  }
+  return execFileSync(command, args, {
+    cwd, timeout: 120_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']
+  })
+}
 try {
   const [packed] = JSON.parse(run(npm, ['pack', '--json', '--ignore-scripts', '--pack-destination', temporary], project))
   assert.ok(packed.files.some(file => file.path === 'exports/workspace-build.js'))
